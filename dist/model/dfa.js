@@ -35,15 +35,20 @@ class DFA {
     simulate(string) {
         let currentState = this.startState;
         for (const symbol of string) {
-            if (!this.alphabet.has(symbol)) {
-                throw new Error(`${symbol} does not belong to the DFA's alphabet.`);
-            }
-            currentState = this.delta[currentState][symbol];
+            currentState = this.transition(currentState, symbol);
         }
+
         return currentState;
     }
-
+    
     transition(currentState, inputSymbol) {
+        if (!this.states.has(currentState)) {
+            throw new Error(`${currentState} is not one of the DFA's states.`);
+        }
+        
+        if (!this.alphabet.has(inputSymbol)) {
+            throw new Error(`${inputSymbol} does not belong to the DFA's alphabet.`);
+        }
         return this.delta[currentState][inputSymbol];
     }
 

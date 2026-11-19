@@ -2,45 +2,80 @@
 (() => {
   const reserved = new Set(['__proto__', 'constructor', 'prototype']);
   const asText = value => ''.constructor(value);
+  
   function list(value, label, maximum) {
-    if (!Array.isArray(value) || value.length > maximum) throw new Error(label + ' must be a list of at most ' + maximum + ' entries.');
-    if (value.some(item => typeof item !== 'string' || !item.length || item.length > 64 || /[\u0000-\u001f]/.test(item) || reserved.has(item))) {
+    if (!Array.isArray(value) || value.length > maximum) {
+      throw new Error(label + ' must be a list of at most ' + maximum + ' entries.');
+    }
+
+    if (value.some(item => typeof item !== 'string' || !item.length
+      || item.length > 64 || /[\u0000-\u001f]/.test(item) || reserved.has(item))) {
       throw new Error(label + ' must contain nonempty text labels, without control characters or reserved object names.');
     }
-    if (new Set(value).size !== value.length) throw new Error(label + ' contains duplicate entries.');
+
+    if (new Set(value).size !== value.length) {
+      throw new Error(label + ' contains duplicate entries.');
+    }
+    
     return value;
   }
+
   function validate(definition) {
-    if (!definition || typeof definition !== 'object') throw new Error('A machine definition is required.');
+    if (!definition || typeof definition !== 'object') {
+      throw new Error('A machine definition is required.');
+    }
+
     const states = list(definition.states, 'States', 144);
-    const alphabet = list(definition.alphabet, 'Alphabet', 12);
-    if (!states.length) throw new Error('Add at least one state.');
-    if (alphabet.some(symbol => [...symbol].length !== 1)) throw new Error('Each alphabet symbol must be exactly one Unicode character.');
-    if (!states.includes(definition.startState)) throw new Error('Choose a start state from the state set.');
+    const alphabet = list(definition.alphabet, 'Alphabet', 12);  
+    if (!states.length) {
+      throw new Error('Add at least one state.');
+    }
+    
+    if (alphabet.some(symbol => [...symbol].length !== 1)) {
+      throw new Error('Each alphabet symbol must be exactly one Unicode character.');
+    }
+
+    if (!states.includes(definition.startState)) {
+      throw new Error('Choose a start state from the state set.');
+    }
+
     const acceptStates = list(definition.acceptStates, 'Accepting states', 144);
-    if (acceptStates.some(state => !states.includes(state))) throw new Error('Accepting states must belong to the state set.');
+    if (acceptStates.some(state => !states.includes(state))) {
+      throw new Error('Accepting states must belong to the state set.');
+    }
+
     const transitions = definition.transitions;
-    if (!transitions || typeof transitions !== 'object' || Array.isArray(transitions)) throw new Error('Provide a transition table.');
+    if (!transitions || typeof transitions !== 'object' || Array.isArray(transitions)) {
+      throw new Error('Provide a transition table.');
+    }
+
     for (const state of states) {
-      if (!Object.hasOwn(transitions, state) || !transitions[state] || typeof transitions[state] !== 'object') throw new Error('Missing transitions for ' + state + '.');
+      if (!Object.hasOwn(transitions, state) || !transitions[state] || typeof transitions[state] !== 'object') {
+        throw new Error('Missing transitions for ' + state + '.');
+      }
+
       for (const symbol of alphabet) {
         if (!Object.hasOwn(transitions[state], symbol) || !states.includes(transitions[state][symbol])) {
           throw new Error('Choose a valid target for δ(' + state + ', ' + symbol + ').');
         }
       }
     }
+
     return {states, alphabet, transitions, startState: definition.startState, acceptStates};
   }
+
   function make(definition) {
     const checked = validate(definition);
     return new DFA([checked.states, checked.alphabet, checked.transitions, checked.startState, checked.acceptStates]);
   }
+
   function serialize(machine) {
     const states = [...machine.getStates()];
     const alphabet = [...machine.getAlphabet()];
     const transitions = Object.fromEntries(states.map(state => [state, Object.fromEntries(alphabet.map(symbol => [symbol, machine.transition(state, symbol)]))]));
     return {states, alphabet, transitions, startState: machine.getStartState(), acceptStates: [...machine.getAcceptStates()]};
   }
+
   function run(machine, input) {
     if (typeof input !== 'string' || [...input].length > 256) throw new Error('Use a string of up to 256 symbols.');
     if (input.length === 0) throw new Error('Enter at least one symbol.');
@@ -54,6 +89,7 @@
     });
     return {input, finalState, accepted, trace};
   }
+
   function canonicalize(definition, prefix) {
     const source = make(definition);
     const names = new Map([...source.getStates()].map((state, index) => [state, prefix + index]));
@@ -64,6 +100,7 @@
     ]));
     return {machine: new DFA([states, source.getAlphabet(), transitions, names.get(source.getStartState()), [...source.getAcceptStates()].map(state => names.get(state))]), reverse};
   }
+
   // Union and intersection both use paired states. Keep their presentation rules here.
   function runBinaryOperation(payload, modelOperation, operationName, statePrefix) {
     const leftDefinition = validate(payload.left);
@@ -99,6 +136,7 @@
     };
     return {kind: 'machine', type: 'dfa', definition, stateLabels};
   }
+  
   registerMachineType({
     id: 'dfa', label: 'DFA', capabilities: ['simulate', 'batch', 'transition', 'diagram', 'transition-table', 'edit'],
     serialize,
