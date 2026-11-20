@@ -73,34 +73,43 @@ class NFA {
             throw new Error(`${nfa} is not an NFA instance.`);
         }
 
-        const subsetId = subset => JSON.stringify([...subset].sort());
-        const subsets = nfa.getAllSubsets([...nfa.getStates()]);
-        const states = subsets.map(subsetId);
         const alphabet = nfa.getAlphabet();
-        const start = subsetId(nfa.epsilonClosure(nfa.getStartState()));
-
         const accepting = nfa.getAcceptStates();
-        const acceptStates = subsets
-            .filter(subset => subset.some(state => accepting.has(state)))
-            .map(subsetId);
+        const idsBySubset = new Map();
+        const pending = [];
+        const addSubset = subset => {
+            const states = [...subset].sort();
+            const key = JSON.stringify(states);
+            if (!idsBySubset.has(key)) {
+                const id = `D${idsBySubset.size}`;
+                idsBySubset.set(key, id);
+                pending.push({id, states});
+            }
+            return idsBySubset.get(key);
+        };
 
+        const start = addSubset(nfa.epsilonClosure(nfa.getStartState()));
+        const acceptStates = new Set();
         const delta = {};
-        for (const subset of subsets) {
-            const from = subsetId(subset);
-            delta[from] = {};
+        for (let index = 0; index < pending.length; index++) {
+            const {id, states} = pending[index];
+            if (states.some(state => accepting.has(state))) {
+                acceptStates.add(id);
+            }
+            delta[id] = {};
 
             for (const symbol of alphabet) {
                 let destination = new Set();
-                for (const state of subset) {
+                for (const state of states) {
                     for (const next of nfa.transition(state, symbol)) {
                         destination = destination.union(nfa.epsilonClosure(next));
                     }
                 }
-                delta[from][symbol] = subsetId(destination);
+                delta[id][symbol] = addSubset(destination);
             }
         }
 
-        return new DFA([states, alphabet, delta, start, acceptStates]);
+        return new DFA([idsBySubset.values(), alphabet, delta, start, acceptStates]);
     }
 
     // Source - https://stackoverflow.com/a/47147597

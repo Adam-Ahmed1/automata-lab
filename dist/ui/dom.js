@@ -16,6 +16,7 @@ export function option(value, label = value, selected = false) {
   return node;
 }
 export const displayWord = text => text === '' ? '""' : text;
+export const displayState = state => Array.isArray(state) ? (state.length ? '{' + state.join(', ') + '}' : '∅') : state;
 export function chips(values, {empty = '∅', onUse} = {}) {
   if (!values.length) return element('span', {class: 'empty-set', text: empty});
   return element('div', {class: 'chips'}, values.map(value => onUse

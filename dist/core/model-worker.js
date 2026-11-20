@@ -32,7 +32,7 @@ if (!Set.prototype.difference) {
     }
   });
 }
-importScripts('../model/constants.js', '../model/dfa.js', '../model/nfa.js', '../model/formalstring.js', '../adapters/dfa.js');
+importScripts('../model/constants.js', '../model/dfa.js', '../model/nfa.js', '../model/formalstring.js', '../adapters/dfa.js', '../adapters/nfa.js');
 self.addEventListener('message', event => {
   const {id, action, payload = {}} = event.data;
   try {

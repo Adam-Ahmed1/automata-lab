@@ -246,3 +246,160 @@ test('operation metadata describes the exact inputs needed by each form',()=>{
  }
  assert.deepEqual(operations.find(item=>item.id==='complement').fields.filter(field=>field.type==='machine').map(field=>field.key),['sourceId']);
 });
+
+const executeNfa=(operation,data)=>request('execute',{type:'nfa',operation,...data});
+const nondeterministic={
+ states:['start','scan','zero','end','accept'],alphabet:['0','1'],
+ transitions:{start:{'ε':['scan']},scan:{'ε':['start'],0:['scan','zero'],1:['scan']},zero:{1:['end']},end:{'ε':['accept']},accept:{'ε':['end']}},
+ startState:'start',acceptStates:['accept']
+};
+
+test('NFA catalog exposes conversion and normalizes sparse transitions',()=>{
+ const adapter=request('catalog').types.find(type=>type.id==='nfa');
+ assert.ok(adapter);
+ assert.deepEqual(adapter.operations.filter(operation=>operation.visible!==false).map(operation=>operation.id),['convert']);
+ assert.equal(adapter.operations.find(operation=>operation.id==='convert').fields[0].modelKey,'source');
+ const normalized=request('describe',{type:'nfa',definition:{states:['a','b'],alphabet:['0'],transitions:{a:{0:['b']}},startState:'a',acceptStates:['b']}});
+ assert.deepEqual(normalized.transitions,{a:{0:['b'],'ε':[]},b:{0:[],'ε':[]}});
+});
+
+test('NFA traces follow every branch and epsilon cycle',()=>{
+ for(const input of ['',...strings(5)]){
+  const result=executeNfa('simulate',{definition:nondeterministic,input});
+  assert.equal(result.accepted,input.endsWith('01'),input);
+  assert.equal(result.trace.length,[...input].length+1);
+  assert.deepEqual(result.finalState,result.trace.at(-1).state);
+ }
+ const result=executeNfa('simulate',{definition:nondeterministic,input:'01'});
+ assert.deepEqual(result.trace[0].state,['start','scan']);
+ assert.deepEqual(new Set(result.finalState),new Set(['scan','start','end','accept']));
+ assert.ok(result.trace[0].edges.some(edge=>edge.from==='start'&&edge.to==='scan'&&edge.symbol==='ε'));
+ assert.ok(result.trace[2].edges.some(edge=>edge.from==='zero'&&edge.to==='end'&&edge.symbol==='1'));
+ assert.ok(result.trace[2].edges.some(edge=>edge.from==='end'&&edge.to==='accept'&&edge.symbol==='ε'));
+});
+
+test('NFA empty strings, empty active sets, and Unicode symbols are supported',()=>{
+ const epsilon={states:['s','f'],alphabet:[],transitions:{s:{'ε':['f']}},startState:'s',acceptStates:['f']};
+ assert.equal(executeNfa('simulate',{definition:epsilon,input:''}).accepted,true);
+ const unicode={...epsilon,alphabet:['😀'],transitions:{s:{'😀':['f']}}};
+ assert.equal(executeNfa('simulate',{definition:unicode,input:'😀'}).accepted,true);
+ const stuck=executeNfa('simulate',{definition:unicode,input:'😀😀😀'});
+ assert.equal(stuck.accepted,false);
+ assert.deepEqual(stuck.finalState,[]);
+ assert.deepEqual(stuck.trace.at(-1).edges,[]);
+ assert.throws(()=>executeNfa('simulate',{definition:unicode,input:'😀😀x'}),/alphabet/);
+ assert.throws(()=>executeNfa('simulate',{definition:epsilon,input:'ε'}),/alphabet/);
+});
+
+test('NFA transition lookup returns raw destination sets and batch preserves errors',()=>{
+ assert.deepEqual(executeNfa('transition',{definition:nondeterministic,state:'start',symbol:'ε'}).next,['scan']);
+ assert.deepEqual(executeNfa('transition',{definition:nondeterministic,state:'zero',symbol:'0'}).next,[]);
+ const results=executeNfa('batch',{definition:nondeterministic,inputs:['01','11','','2']});
+ assert.equal(results.length,3);
+ assert.equal(results[0].accepted,true);
+ assert.equal(results[1].accepted,false);
+ assert.match(results[2].error,/alphabet/);
+ assert.equal(results[0].trace,undefined);
+});
+
+test('NFA validation rejects invalid targets, rows, labels and alphabets',()=>{
+ const describe=definition=>request('describe',{type:'nfa',definition});
+ assert.throws(()=>describe({...nondeterministic,transitions:{start:null}}),/row/);
+ assert.throws(()=>describe({...nondeterministic,transitions:{start:{0:'scan'}}}),/list/);
+ assert.throws(()=>describe({...nondeterministic,transitions:{start:{0:['missing']}}}),/state set/);
+ assert.throws(()=>describe({...nondeterministic,transitions:{missing:{}}}),/state set/);
+ assert.throws(()=>describe({...nondeterministic,transitions:{start:{2:[]}}}),/alphabet/);
+ assert.throws(()=>describe({...nondeterministic,alphabet:['ε']}),/Alphabet cannot/);
+ assert.throws(()=>describe({...nondeterministic,states:['__proto__']}),/reserved/);
+ assert.throws(()=>describe({...nondeterministic,states:['start','start']}),/duplicate/);
+});
+
+test('NFA conversion preserves language and produces reusable DFA definitions',()=>{
+ const before=JSON.stringify(nondeterministic);
+ const result=executeNfa('convert',{source:nondeterministic});
+ assert.equal(result.kind,'machine');
+ assert.equal(result.type,'dfa');
+ assert.deepEqual(request('describe',{type:'dfa',definition:result.definition}),result.definition);
+ const union=execute('union',{left:result.definition,right:even});
+ for(const input of strings(5)){
+  assert.equal(execute('simulate',{definition:result.definition,input}).accepted,input.endsWith('01'),input);
+  assert.equal(execute('simulate',{definition:union.definition,input}).accepted,input.endsWith('01')||[...input].filter(symbol=>symbol==='0').length%2===0,input);
+ }
+ assert.equal(JSON.stringify(nondeterministic),before);
+});
+
+test('NFA conversion limits output states and permits large sparse source machines',()=>{
+ const states=Array.from({length:9},(_,index)=>'s'+index);
+ const sparse={states,alphabet:['0','1'],transitions:{s0:{0:['s0'],1:['s0']}},startState:'s0',acceptStates:['s0']};
+ assert.equal(executeNfa('convert',{source:sparse}).definition.states.length,1);
+ const transitions={s0:{0:['s0'],1:['s0','s1']}};
+ for(let index=1;index<8;index++)transitions['s'+index]={0:['s'+(index+1)],1:['s'+(index+1)]};
+ assert.throws(()=>executeNfa('convert',{source:{...sparse,transitions,acceptStates:['s8']}}),/144 states/);
+});
+
+test('NFA worker operations work with Set fallbacks',()=>{
+ let fallbackHandler,fallbackResponse;
+ const fallbackContext=vm.createContext({structuredClone,self:{
+  addEventListener(name,callback){if(name==='message')fallbackHandler=callback;},
+  postMessage(data){fallbackResponse=data;}
+ }});
+ vm.runInContext("for(const name of ['union','isSubsetOf','difference'])Object.defineProperty(Set.prototype,name,{value:undefined,writable:true,configurable:true});",fallbackContext);
+ fallbackContext.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(path.resolve(root,'dist/core',file),'utf8'),fallbackContext,{filename:file}));
+ vm.runInContext(fs.readFileSync(path.join(root,'dist/core/model-worker.js'),'utf8'),fallbackContext);
+ for(const operation of ['simulate','convert']){
+  fallbackHandler({data:{id:1,action:'execute',payload:{type:'nfa',operation,definition:nondeterministic,source:nondeterministic,input:'01'}}});
+  assert.ok(fallbackResponse.ok,fallbackResponse.error);
+  if(operation==='simulate')assert.equal(fallbackResponse.result.accepted,true);
+  else assert.equal(fallbackResponse.result.type,'dfa');
+ }
+});
+
+test('NFA examples and mixed workspace imports preserve their machine types',async()=>{
+ const {exampleMachines,normalizeImport}=await import('../dist/core/workspace.js');
+ const examples=exampleMachines();
+ const ending=examples.find(machine=>machine.name==='Ends with 01 (NFA)');
+ const repeated=examples.find(machine=>machine.name==='Zeros or ones');
+ assert.equal(ending.type,'nfa');
+ assert.equal(repeated.type,'nfa');
+ for(const input of ['',...strings(4)]){
+  assert.equal(executeNfa('simulate',{definition:ending.definition,input}).accepted,input.endsWith('01'),input);
+  assert.equal(executeNfa('simulate',{definition:repeated.definition,input}).accepted,/^(0*|1*)$/.test(input),input);
+ }
+ const normalized=examples.map(machine=>({...machine,definition:request('describe',{type:machine.type,definition:machine.definition})}));
+ const restored=normalizeImport(JSON.parse(JSON.stringify({version:1,kind:'automata-workspace',machines:normalized})));
+ assert.deepEqual(restored.map(machine=>machine.type),normalized.map(machine=>machine.type));
+ assert.deepEqual(restored.map(machine=>machine.definition),normalized.map(machine=>machine.definition));
+ assert.ok(restored.every((machine,index)=>machine.id!==normalized[index].id));
+});
+
+test('worker timeout recovery rejects pending work and starts a fresh worker',async()=>{
+ const source=fs.readFileSync(path.join(root,'dist/core/bridge.js'),'utf8').replace('export class ModelBridge','class ModelBridge');
+ const workers=[],timers=new Map();
+ let timerId=0;
+ class FakeWorker {
+  constructor(){this.listeners={};workers.push(this);}
+  addEventListener(name,listener){this.listeners[name]=listener;}
+  postMessage(message){this.lastMessage=message;}
+  terminate(){this.terminated=true;}
+ }
+ const bridgeContext=vm.createContext({Worker:FakeWorker,URL,
+  setTimeout(callback){timers.set(++timerId,callback);return timerId;},
+  clearTimeout(id){timers.delete(id);}
+ });
+ vm.runInContext(source.replace('import.meta.url',JSON.stringify('http://localhost/core/bridge.js'))+'\nglobalThis.bridge=new ModelBridge();',bridgeContext);
+ const bridge=bridgeContext.bridge;
+ const first=bridge.call('catalog').catch(error=>error.message);
+ const queued=bridge.call('catalog').catch(error=>error.message);
+ [...timers.values()][0]();
+ assert.match(await first,/too long/);
+ assert.match(await queued,/too long/);
+ assert.equal(workers[0].terminated,true);
+ assert.equal(timers.size,0);
+ const retry=bridge.call('catalog');
+ const id=workers[1].lastMessage.id;
+ workers[0].listeners.message({data:{id,ok:true,result:'stale'}});
+ assert.equal(bridge.pending.size,1);
+ workers[1].listeners.message({data:{id,ok:true,result:'fresh'}});
+ assert.equal(await retry,'fresh');
+ assert.equal(timers.size,0);
+});

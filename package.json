@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "Local interface around Adam Ibrahim's unchanged DFA and String model",
+  "description": "Browser workspace around Adam Ibrahim's DFA, NFA and String models",
   "scripts": {
     "start": "node serve.cjs",
     "test": "node --test tests/model.test.cjs"

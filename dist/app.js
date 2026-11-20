@@ -1,11 +1,12 @@
 import {ModelBridge} from './core/bridge.js';
 import {STORAGE_KEY,makeMachine,exampleMachines,upgradeExampleMachines,normalizeImport,newId} from './core/workspace.js';
-import {$,element,option,chips,download,notify,busy} from './ui/dom.js';
+import {$,element,option,chips,download,notify,busy,displayState} from './ui/dom.js';
 import {openEditor} from './ui/editor.js';
 import {MachineGraph} from './ui/graph.js';
 import {SimulationPanel} from './ui/simulation.js';
 import {renderOperations,machineViews} from './ui/registry.js';
 import {createDfaView} from './ui/dfa-view.js';
+import {createNfaView} from './ui/nfa-view.js';
 
 const bridge=new ModelBridge();
 const typeRegistry=new Map();
@@ -17,6 +18,7 @@ const adapter=()=>typeRegistry.get(active()?.type);
 const slug=text=>text.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'machine';
 let graph=new MachineGraph($('#graph-container'),{onSelect:state=>inspect(state),onZoom:value=>{$('#zoom-value').textContent=value+'%';}});
 machineViews.set('dfa',createDfaView({graph,onInspect:inspect,editor:openEditor}));
+machineViews.set('nfa',createNfaView({graph,onInspect:inspect,editor:(machine,onSave)=>openEditor(machine,onSave,{type:'nfa'})}));
 const simulator=new SimulationPanel({bridge,graph,onState:state=>{const view=machineViews.get(active()?.type);if(view?.onTrace)view.onTrace(state);else if(typeof state==='string')$('#query-state').value=state;},onShowTest:()=>selectTool('test')});
 
 function save(){
@@ -40,7 +42,7 @@ async function inspect(state){
  $('#query-state').value=state;
  graph.selectedState=state;
  graph.highlight(graph.currentState,graph.lastStep);
- if(!active().definition.alphabet.length)return;
+ if(!$('#query-symbol').options.length)return;
  await queryTransition();
 }
 async function queryTransition(){
@@ -48,7 +50,7 @@ async function queryTransition(){
  try{
   const result=await bridge.call('execute',{type:machine.type,operation:'transition',definition:machine.definition,state:$('#query-state').value,symbol:$('#query-symbol').value});
   if(active()?.id!==machine.id)return;
-  $('#transition-result').replaceChildren(element('span',{class:'transition-expression',text:'δ('+result.state+', '+(result.symbol===' '?'␠':result.symbol)+')'}),element('span',{'aria-hidden':'true',text:'→'}),element('strong',{class:'mono',text:result.next}));
+  $('#transition-result').replaceChildren(element('span',{class:'transition-expression',text:'δ('+result.state+', '+(result.symbol===' '?'␠':result.symbol)+')'}),element('span',{'aria-hidden':'true',text:'→'}),element('strong',{class:'mono',text:displayState(result.next)}));
  }catch(error){notify(error.message,true);}
 }
 async function operate(operation,data){
@@ -159,7 +161,7 @@ $('#help-button').onclick=()=>$('#help-dialog').showModal();
 $('#browse-examples').onclick=()=>{
  const examples=exampleMachines();
  $('#example-list').replaceChildren(...examples.map(example=>element('article',{class:'example-card'},[
-  element('div',{},[element('span',{class:'type-pill',text:'DFA'}),element('h3',{text:example.name}),element('p',{text:example.description}),element('small',{text:quantity(example.definition.states.length,'state')+' · alphabet {0, 1}'})]),
+  element('div',{},[element('span',{class:'type-pill',text:typeRegistry.get(example.type)?.label||example.type}),element('h3',{text:example.name}),element('p',{text:example.description}),element('small',{text:quantity(example.definition.states.length,'state')+' · alphabet {'+example.definition.alphabet.join(', ')+'}'})]),
   element('button',{type:'button',class:'button outline',text:'Add to workspace',onclick:event=>busy(event.currentTarget,async()=>{if(machines.length>=20)throw new Error('The workspace holds up to 20 machines.');machines.push(example);await activate(example.id);$('#examples-dialog').close();notify('Example added.');})})
  ])));
  $('#examples-dialog').showModal();

@@ -6,9 +6,13 @@ export class MachineGraph{
  draw(machine,selectedState){
   this.machine=machine;this.selectedState=selectedState;this.scale=1;this.pan={x:0,y:0};
   const d=machine.definition,dark=document.documentElement.dataset.theme!=='light';
+  const symbols = machine.type === 'nfa' ? [...d.alphabet, 'ε'] : d.alphabet;
+  const targetsFor = (state, symbol) => machine.type === 'nfa'
+    ? d.transitions[state]?.[symbol] || []
+    : [d.transitions[state][symbol]];
   const p=dark?{ink:'#d9e4ef',muted:'#93a6ba',edge:'#667b91',node:'#172435',accent:'#8de5cf',background:'#101b29'}:{ink:'#1c3146',muted:'#5c7187',edge:'#8395a8',node:'#ffffff',accent:'#167963',background:'#f5f8fb'};this.palette=p;
   const depths=new Map([[d.startState,0]]),queue=[d.startState];
-  while(queue.length){const state=queue.shift();for(const target of Object.values(d.transitions[state]||{})){if(!depths.has(target)){depths.set(target,depths.get(state)+1);queue.push(target);}}}
+  while(queue.length){const state=queue.shift();for(const symbol of symbols)for(const target of targetsFor(state,symbol)){if(!depths.has(target)){depths.set(target,depths.get(state)+1);queue.push(target);}}}
   const deepest=Math.max(0,...depths.values());for(const state of d.states)if(!depths.has(state))depths.set(state,deepest+1);
   const layers=[];for(const state of d.states)(layers[depths.get(state)]||=[]).push(state);
   const width=Math.max(320,this.container.clientWidth||660,layers.length*80+60),height=Math.max(330,Math.max(...layers.map(l=>l?.length||0))*112+155);this.width=width;this.height=height;
@@ -18,7 +22,7 @@ export class MachineGraph{
   const defs=node('defs');for(const [id,color] of [['arrow',p.edge],['active-arrow',p.accent]]){const m=node('marker',{id,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});m.append(node('path',{d:'M 0 0 L 10 5 L 0 10 z',fill:color}));defs.append(m);}svg.append(defs);
   const group=node('g');svg.append(group);this.group=group;this.svg=svg;this.edgeNodes=[];
   const start=positions.get(d.startState);group.append(node('path',{d:'M '+(start.x-72)+' '+start.y+' L '+(start.x-36)+' '+start.y,fill:'none',stroke:p.edge,'stroke-width':1.8,'marker-end':'url(#arrow)'}));
-  const pairs=new Map();for(const state of d.states)for(const symbol of d.alphabet){const target=d.transitions[state][symbol],key=JSON.stringify([state,target]);if(!pairs.has(key))pairs.set(key,{from:state,to:target,symbols:[]});pairs.get(key).symbols.push(symbol);}
+  const pairs=new Map();for(const state of d.states)for(const symbol of symbols)for(const target of targetsFor(state,symbol)){const key=JSON.stringify([state,target]);if(!pairs.has(key))pairs.set(key,{from:state,to:target,symbols:[]});pairs.get(key).symbols.push(symbol);}
   for(const edge of pairs.values()){
    const a=positions.get(edge.from),b=positions.get(edge.to);let path,lx,ly;
    if(edge.from===edge.to){path='M '+(a.x-20)+' '+(a.y-24)+' C '+(a.x-68)+' '+(a.y-106)+', '+(a.x+68)+' '+(a.y-106)+', '+(a.x+21)+' '+(a.y-25);lx=a.x;ly=a.y-87;}
@@ -45,6 +49,30 @@ export class MachineGraph{
  updateTransform(){this.group?.setAttribute('transform','translate('+(this.width/2*(1-this.scale)+this.pan.x)+' '+(this.height/2*(1-this.scale)+this.pan.y)+') scale('+this.scale+')');this.onZoom?.(Math.round(this.scale*100));}
  zoom(amount){this.scale=Math.min(8,Math.max(.4,this.scale*amount));this.updateTransform();}
  fit(){this.scale=1;this.pan={x:0,y:0};this.updateTransform();}
- highlight(current,step=null){this.currentState=current;this.lastStep=step;for(const [state,{node:g,outer}] of this.stateNodes||[]){const active=state===current;outer.setAttribute('stroke',active?this.palette.accent:this.palette.edge);outer.setAttribute('fill',active?(document.documentElement.dataset.theme==='light'?'#e3f4ee':'#203d3b'):this.palette.node);outer.setAttribute('stroke-width',active?2.5:1.6);g.setAttribute('aria-pressed',state===this.selectedState?'true':'false');}for(const edge of this.edgeNodes||[]){const active=step&&edge.from===step.from&&edge.to===step.to&&edge.symbols.includes(step.symbol);edge.path.setAttribute('stroke',active?this.palette.accent:this.palette.edge);edge.path.setAttribute('stroke-width',active?2.7:1.6);edge.path.setAttribute('marker-end',active?'url(#active-arrow)':'url(#arrow)');}}
+ highlight(current, step = null) {
+  this.currentState = current;
+  this.lastStep = step;
+  const activeStates = new Set(Array.isArray(current) ? current : [current]);
+  const fromStates = new Set(Array.isArray(step?.from) ? step.from : [step?.from]);
+  const toStates = new Set(Array.isArray(step?.to) ? step.to : [step?.to]);
+  const activeEdges = Array.isArray(step?.edges)
+    ? new Set(step.edges.map(edge => JSON.stringify([edge.from, edge.to, edge.symbol])))
+    : null;
+  for (const [state, {node: group, outer}] of this.stateNodes || []) {
+   const active = activeStates.has(state);
+   outer.setAttribute('stroke', active ? this.palette.accent : this.palette.edge);
+   outer.setAttribute('fill', active ? (document.documentElement.dataset.theme === 'light' ? '#e3f4ee' : '#203d3b') : this.palette.node);
+   outer.setAttribute('stroke-width', active ? 2.5 : 1.6);
+   group.setAttribute('aria-pressed', state === this.selectedState ? 'true' : 'false');
+  }
+  for (const edge of this.edgeNodes || []) {
+   const active = step && (activeEdges
+    ? edge.symbols.some(symbol => activeEdges.has(JSON.stringify([edge.from, edge.to, symbol])))
+    : fromStates.has(edge.from) && toStates.has(edge.to) && edge.symbols.includes(step.symbol));
+   edge.path.setAttribute('stroke', active ? this.palette.accent : this.palette.edge);
+   edge.path.setAttribute('stroke-width', active ? 2.7 : 1.6);
+   edge.path.setAttribute('marker-end', active ? 'url(#active-arrow)' : 'url(#arrow)');
+  }
+ }
  exportSvg(){const clone=this.svg.cloneNode(true);clone.setAttribute('xmlns',NS);clone.setAttribute('width',this.width);clone.setAttribute('height',this.height);clone.insertBefore(node('rect',{width:this.width,height:this.height,fill:this.palette.background}),clone.children[1]);clone.querySelector('g').removeAttribute('transform');return new XMLSerializer().serializeToString(clone);}
 }

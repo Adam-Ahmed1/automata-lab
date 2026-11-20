@@ -19,7 +19,17 @@ export function exampleMachines() {
       states: ['r0', 'r1', 'r2'], alphabet: ['0', '1'],
       transitions: {r0: {'0': 'r0', '1': 'r1'}, r1: {'0': 'r2', '1': 'r0'}, r2: {'0': 'r1', '1': 'r2'}},
       startState: 'r0', acceptStates: ['r0']
-    })
+    }),
+    makeMachine('Ends with 01 (NFA)', 'An ε-transition starts the scan. The NFA branches on 0 to guess where the final 01 begins.', {
+      states: ['start', 'scan', 'zero', 'accept'], alphabet: ['0', '1'],
+      transitions: {start: {'ε': ['scan']}, scan: {'0': ['scan', 'zero'], '1': ['scan']}, zero: {'1': ['accept']}, accept: {}},
+      startState: 'start', acceptStates: ['accept']
+    }, {type: 'nfa'}),
+    makeMachine('Zeros or ones', 'An ε-branch chooses only 0s or only 1s. Accepts the empty string, 000, and 111, and rejects mixed strings such as 01.', {
+      states: ['start', 'zeros', 'ones'], alphabet: ['0', '1'],
+      transitions: {start: {'ε': ['zeros', 'ones']}, zeros: {'0': ['zeros']}, ones: {'1': ['ones']}},
+      startState: 'start', acceptStates: ['zeros', 'ones']
+    }, {type: 'nfa'})
   ];
 }
 export function parseSet(text) {
