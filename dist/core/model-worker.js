@@ -1,70 +1,141 @@
 /* Load the model classes and route requests from the browser interface. */
 const machineAdapters = new Map();
+
 function registerMachineType(adapter) {
-  if (machineAdapters.has(adapter.id)) throw new Error('Machine type already registered.');
+  if (machineAdapters.has(adapter.id)) {
+    throw new Error('Machine type already registered.');
+  }
+
   machineAdapters.set(adapter.id, adapter);
 }
+
 // Worker-only fallbacks for the Set operations used by the automata model.
 // Existing native implementations are kept when available.
 if (!Set.prototype.union) {
   Object.defineProperty(Set.prototype, 'union', {
-    configurable: true, writable: true,
-    value: function (other) { const result = new Set(this); for (const value of other) result.add(value); return result; }
-  });
-}
-if (!Set.prototype.isSubsetOf) {
-  Object.defineProperty(Set.prototype, 'isSubsetOf', {
-    configurable: true, writable: true,
+    configurable: true,
+    writable: true,
     value: function (other) {
-      if (this.size > other.size) return false;
-      for (const value of this) if (!other.has(value)) return false;
-      return true;
-    }
-  });
-}
-if (!Set.prototype.difference) {
-  Object.defineProperty(Set.prototype, 'difference', {
-    configurable: true, writable: true,
-    value: function (other) {
-      const result = new Set();
-      for (const value of this) if (!other.has(value)) result.add(value);
+      const result = new Set(this);
+
+      for (const value of other) {
+        result.add(value);
+      }
+
       return result;
     }
   });
 }
-importScripts('../model/constants.js', '../model/dfa.js', '../model/nfa.js', '../model/formalstring.js', '../adapters/dfa.js', '../adapters/nfa.js');
+
+if (!Set.prototype.isSubsetOf) {
+  Object.defineProperty(Set.prototype, 'isSubsetOf', {
+    configurable: true,
+    writable: true,
+    value: function (other) {
+      if (this.size > other.size) {
+        return false;
+      }
+
+      for (const value of this) {
+        if (!other.has(value)) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+  });
+}
+
+if (!Set.prototype.difference) {
+  Object.defineProperty(Set.prototype, 'difference', {
+    configurable: true,
+    writable: true,
+    value: function (other) {
+      const result = new Set();
+
+      for (const value of this) {
+        if (!other.has(value)) {
+          result.add(value);
+        }
+      }
+
+      return result;
+    }
+  });
+}
+
+importScripts(
+  '../model/constants.js',
+  '../model/dfa.js',
+  '../model/nfa.js',
+  '../model/formalstring.js',
+  '../adapters/dfa.js',
+  '../adapters/nfa.js'
+);
+
 self.addEventListener('message', event => {
-  const {id, action, payload = {}} = event.data;
+  const { id, action, payload = {} } = event.data;
+
   try {
     let result;
+
     if (action === 'catalog') {
       result = {
         types: [...machineAdapters.values()].map(adapter => ({
-          id: adapter.id, label: adapter.label, capabilities: adapter.capabilities,
-          operations: adapter.operations.map(({run, ...metadata}) => metadata)
+          id: adapter.id,
+          label: adapter.label,
+          capabilities: adapter.capabilities,
+          operations: adapter.operations.map(({ run, ...metadata }) => metadata)
         }))
       };
     } else if (action === 'word') {
       const text = payload.text;
-      if (typeof text !== 'string' || text.length === 0 || [...text].length > 24) throw new Error('Enter 1–24 characters in String tools.');
+
+      if (typeof text !== 'string' || text.length === 0 || [...text].length > 24) {
+        throw new Error('Enter 1–24 characters in String tools.');
+      }
+
       if ([...text].some(character => character.length > 1)) {
         throw new Error('String tools currently support basic Unicode characters only. The original suffix method reverses UTF-16 units, so emoji and other non-BMP characters are not supported here. DFA simulation still accepts single Unicode symbols.');
       }
+
       const word = new FormalString('');
       word.setString(text);
-      result = {text: word.getString(), prefixes: word.getPrefixes(), suffixes: word.getSuffixes(), substrings: [...word.getSubstrings()]};
+      result = {
+        text: word.getString(),
+        prefixes: word.getPrefixes(),
+        suffixes: word.getSuffixes(),
+        substrings: [...word.getSubstrings()]
+      };
     } else {
       const adapter = machineAdapters.get(payload.type);
-      if (!adapter) throw new Error('This machine type is not available yet.');
-      if (action === 'describe') result = adapter.describe(payload.definition);
-      else if (action === 'execute') {
+
+      if (!adapter) {
+        throw new Error('This machine type is not available yet.');
+      }
+
+      if (action === 'describe') {
+        result = adapter.describe(payload.definition);
+      } else if (action === 'execute') {
         const operation = adapter.operations.find(item => item.id === payload.operation);
-        if (!operation) throw new Error('This operation is not supported by this machine type.');
+
+        if (!operation) {
+          throw new Error('This operation is not supported by this machine type.');
+        }
+
         result = operation.run(payload);
-      } else throw new Error('Unknown model request.');
+      } else {
+        throw new Error('Unknown model request.');
+      }
     }
-    self.postMessage({id, ok: true, result});
+
+    self.postMessage({ id, ok: true, result });
   } catch (error) {
-    self.postMessage({id, ok: false, error: error.message || 'The model could not complete this request.'});
+    self.postMessage({
+      id,
+      ok: false,
+      error: error.message || 'The model could not complete this request.'
+    });
   }
 });
